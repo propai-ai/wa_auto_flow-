@@ -1,0 +1,874 @@
+{
+  "name": "Sally_Sales_Flow",
+  "nodes": [
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.body.Body }}",
+              "operation": "notEqual"
+            }
+          ]
+        }
+      },
+      "id": "d4ccc3c8-0d2e-465f-9f9a-886308f21fe9",
+      "name": "Is Text Message?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -2032,
+        -1712
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body;\n\nconst textMessage = (body.Body || '').trim();\nif (!textMessage) return [];\n\n// Phone: Twilio sends \"whatsapp:+91XXXXXXXXXX\" format\nconst rawFrom = body.From || '';\nconst phone = rawFrom.replace('whatsapp:', '').replace('+', '');\n\nif (!phone) return [];\n\nconst senderName = body.ProfileName || '';\n\nreturn [{\n  json: {\n    phone: phone,\n    senderName: senderName,\n    clean: textMessage,\n    message: textMessage,\n    chatId: rawFrom,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "b3c949ab-50ae-427a-9ad0-04cd2f3c7dbf",
+      "name": "Extract Message Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1808,
+        -1712
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.airtable.com/v0/{{ $env.AIRTABLE_BASE_ID }}/Leads",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filterByFormula",
+              "value": "={phone}='{{ $('Extract Message Data').item.json.phone }}'\n"
+            },
+            {
+              "name": "maxRecords",
+              "value": "1"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.AIRTABLE_TOKEN }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "95f0debb-93db-4655-82b7-086f1f07f71d",
+      "name": "Find Lead in Airtable",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -1360,
+        -1712
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check if lead was found; pass through data for next nodes\n// Check if lead was found; pass through data for next nodes\nconst prevData = $('Extract Message Data').first().json\nconst claudeResponse = $('HTTP Request').first().json;\nconst airtableResponse = $input.first().json;\n\nconst records = airtableResponse.records || [];\nconst leadExists = records.length > 0;\nconst lead = leadExists ? records[0] : null;\n\n// Parse Claude extraction\nconst extractedText = claudeResponse.content[0].text\n  .replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\nconst extracted = JSON.parse(extractedText);\n\nreturn [{\n  json: {\n    ...prevData,\n    leadExists: leadExists,\n    leadId: lead?.id || null,\n    leadFields: lead?.fields || {},\n    leadName: lead?.fields?.Name || prevData.senderName || 'Buyer',\n    bedrooms_wanted: extracted.bedrooms_wanted || null,\n    localities_wanted:extracted.localities_wanted || null,\n    budget_min:  extracted.budget_min || null,\n    budget_max: extracted.budget_max || null,\n    intent: extracted.intent || null,\n    spl_requests :extracted.spl_requests || null,\n    budget_type: extracted.budget_type || null\n  }\n}];"
+      },
+      "id": "d7170b1c-915f-4a50-a14c-4bc45fc41ce1",
+      "name": "Check Lead Exists",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1136,
+        -1712
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.leadExists }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "59eaf071-ac3e-4f23-817d-c958a557e356",
+      "name": "Lead Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -912,
+        -1712
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.airtable.com/v0/{{ $env.AIRTABLE_BASE_ID }}/Conversations",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "filterByFormula",
+              "value": "={phone}='{{ $json.fields.phone }}'"
+            },
+            {
+              "name": "sort[0][field]",
+              "value": "timestamp"
+            },
+            {
+              "name": "sort[0][direction]",
+              "value": "desc"
+            },
+            {
+              "name": "maxRecords",
+              "value": "10"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.AIRTABLE_TOKEN }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ac6f626c-a444-4d8c-a1e6-25e205ab9650",
+      "name": "Get Conversation History",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -240,
+        -1808
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build the Claude API request with conversation history + properties\n// const messageData = $('Merge Lead Data').first().json;\n\nlet messageData;\n\ntry {\n  messageData = $('Update LEAD').first().json;\n} catch(e) {\n  try {\n    messageData = $(\"Create New Lead\").first().json;\n  } catch(e2) {\n    messageData = {};\n  }\n}\n\nconst userMessage = \n  $(\"Check Lead Exists\").first().json;\n\nlet historyResponse = { records: [] };\ntry {\n  const historyData = $('Get Conversation History').first().json;\n  historyResponse = { records: historyData.records || [] };\n} catch(e) {\n  historyResponse = { records: [] };\n}\n\n// let propertiesResponse = [];\n// try {\n//   propertiesResponse = $('Get Active Properties').first().json?.records || [];\n// } catch(e) {\n//   propertiesResponse = [];\n// }\n\n// FIX 1 — limit to last 10 messages and strip empty content\nconst historyRecords = (historyResponse.records || []).reverse().slice(-10);\nconst conversationHistory = historyRecords.map(r => ({\n  role: r.fields.direction === 'inbound' ? 'user' : 'assistant',\n  content: r.fields.message || ''\n})).filter(m => m.content && m.content.trim() !== '');\n\n// Format properties for the prompt\n// const properties = (propertiesResponse.records || []).map(r => {\n//   const f = r.fields;\n//   return `- ${f.title} | ${f.locality} | ${f.bedrooms}BHK | ₹${f.price_lakhs}L | ${f.area_sqft || '?'} sqft | ${f.possession || 'check'} | ${f.amenities || ''} | ${f.description || ''}`;\n// }).join('\\n');\n\n// Build lead context — FIX 3: include special_requirements\nconst lead = messageData.fields;\nconsole.log(\"hi\", lead)\nconst leadContext = [\n  lead.Name ? `Name: ${lead.Name}` : null,\n  lead.budget_min || lead.budget_max ? `Budget: ₹${lead.budget_min || '?'}L - ₹${lead.budget_max || '?'}L` : null,\n  lead.bedrooms_wanted ? `Looking for: ${lead.bedrooms_wanted}` : null,\n  lead.localities_wanted ? `Preferred areas: ${lead.localities_wanted}` : null,\n  lead.special_requirements ? `Special requirements: ${lead.special_requirements}` : null,\n  lead.status ? `Status: ${lead.status}` : null,\n].filter(Boolean).join('\\n');\n\n// FIX 2 — Updated system prompt\nconst systemPrompt = `You are Sally, a warm and knowledgeable real estate assistant for a property broker in Bangalore, India. You help property buyers find their ideal home through WhatsApp.\n\n## YOUR PERSONALITY\n- Conversational, friendly, professional — like a helpful colleague, not a salesperson\n- Respond in the same language the buyer uses (English, Kannada, Hindi, or mix)\n- Keep replies concise — WhatsApp messages. Max 3-4 short lines.\n- Use simple formatting: no markdown stars or hashes\n- Never repeat yourself — check conversation history before responding\n\n## CRITICAL CONVERSATION RULES\n- NEVER repeat or resend any message already in the conversation history\n- NEVER greet again if you have already greeted\n- NEVER ask a question you have already asked\n- Read the full history and continue naturally from where it left off\n- Each reply must be NEW content only\n\n## THE 4 QUALIFYING FIELDS\nYou need these 4 things to find matching properties:\na) BUDGET — e.g. 70-100 lakhs\nb) BEDROOMS — 1/2/3 BHK or villa\nc) SPECIAL REQUIREMENTS — gated community, park access, metro nearby, calm area etc\nd) LOCALITIES — which areas in Bangalore they prefer\n\n## HOW TO DETERMINE WHAT STAGE YOU ARE IN\n\n### CHECK KNOWN BUYER DETAILS first (provided below).\nCount how many of the 4 fields are already known from history + lead data.\n\n---\n\n### STAGE 1 — GREETING (only if this is the very first message ever)\n- outbound message count = 0\n- Greet warmly, introduce yourself as Sally from Aasthi Ka Saathi.\n- If the buyer's first message already contains ALL 4 fields → skip to STAGE 3 directly.\n- If some fields are missing → ask only about what is missing (max 1-2 questions), skip to STAGE 2.\n\n---\n\n### STAGE 2 — QUALIFYING (only ask about MISSING fields)\n- Ask ONLY about the Qualifying fields that are not yet known.\n- E.g : If budget is known → do NOT ask about budget.\n- E.g : If locality is known → do NOT ask about locality.\n- Continue until all 4 fields are collected OR after 3 follow-up messages, move to STAGE 3 with what you have.\n- Once ALL 4 fields are available at any point → immediately move to STAGE 3.\n\n---\n\n### STAGE 3 — CONFIRM \nWhen all 4 fields are available (from current message + history + lead data combined):\n\n — CONFIRM REQUIREMENTS (only once, skip if already confirmed in history):\nSend a confirmation message listing what you understood:\n\"Kindly confirm if we have your requirements rite:\nBudget: ₹[X]L\nLooking for: [BHK type]\nPreferred areas: [localities]\nAny special needs: [requirements]\n\nIs this correct? 😊\n\nIf the user confirms the details are correct, Set intent to \"qualified\" for this message.\nset intent to \"active_buy\":\n\nIf User says not correct ask the user to provide the correct details. \nSay exactly:\n\"Aasti ka Saathi is happy to help you find property of your choice . Based on your requirements, I'm connecting you with your dedicated property manager from Aasthi Ka Saathi who will personally help you find the right home and close the deal successfully. They will reach out to you shortly! 🙏\"\nSkip to STAGE 5\n\n---\n\n### STAGE 4 — VISIT BOOKING\nIf buyer says yes to a visit:\n- Propose tomorrow between 10:00 AM – 7:00 PM\n- Say: \"How about tomorrow [Day], [Date] at [Time]? Feel free to suggest another time if needed!\"\n- Once confirmed say exactly:\n  \"Perfect! Your visit is confirmed. Our manager will connect with you shortly to finalize the details. Thank you! 🙏\"\n- Set intent to \"book_visit\"\n\n---\n\n### STAGE 5 — ESCALATE TO HUMAN\nEscalate (set intent to \"escalate\") when:\n- No matching properties found\n- Buyer wants to negotiate price\n- Buyer asks legal/documentation questions\n- Buyer is ready to make an offer\n- Any question you cannot answer from listing data\n\n---\n\n## COUNTING OUTBOUND MESSAGES\nCount assistant-role messages in conversation history:\n- 0 outbound → Stage 1 (greeting)\n- 1-3 outbound → Stage 2 (qualifying) or Stage 3 if all 4 fields known\n- 4+ outbound → Stage 3 onwards\n\n## ACTIVE PROPERTY LISTINGS\n${ 'Active listings available at this time, our manager will contact.'}\n\n## KNOWN BUYER DETAILS\n${leadContext || 'New buyer — no details collected yet.'}\n\n## OUTPUT FORMAT — respond ONLY with valid JSON, no other text, no markdown:\n{\n  \"reply\": \"Your WhatsApp message to the buyer\",\n  \"intent\": \"greeting | qualifying | matching | book_visit | escalate | other\",\n  \"extracted\": {\n    \"name\": null,\n    \"budget_min\": null,\n    \"budget_max\": null,\n    \"bedrooms_wanted\": null,\n    \"localities_wanted\": null,\n    \"special_requirements\": null,\n    \"visit_property\": null,\n    \"visit_datetime\": null\n  }\n}`;\n\n// Add current message to history\nconversationHistory.push({\n  role: 'user',\n  content: userMessage.message\n});\n\nreturn [{\n  json: {\n    ...messageData,\n    claudeRequest: {\n      model: \"claude-haiku-4-5-20251001\",\n      max_tokens: 1024,\n      system: systemPrompt,\n      messages: conversationHistory\n    }\n  }\n}];\n"
+      },
+      "id": "2fd32995-3ceb-4068-9d7a-8ade27a12e73",
+      "name": "Build Claude Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -16,
+        -1712
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.ANTHROPIC_API_KEY }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-haiku-4-5-20251001\",\n  \"max_tokens\": 1024,\n  \"messages\": {{ JSON.stringify ($json.claudeRequest.messages )}},\n  \"system\": \"{{ $json.claudeRequest.system.replace(/\\n/g, ' ').replace(/\"/g, '\\\\\"') }}\"\n}",
+        "options": {
+          "timeout": 55000
+        }
+      },
+      "id": "a2a276dd-de73-4f62-aa16-4f873fb69223",
+      "name": "Call Claude API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        208,
+        -1712
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Claude's JSON response\nconst claudeResponse = $input.first().json;\nconst messageData = $('Build Claude Prompt').first().json;\n\nlet sallyReply = '';\nlet intent = 'other';\nlet extracted = {};\n\ntry {\n  const content = claudeResponse.content?.[0]?.text || '';\n  // Strip any accidental markdown fences\n  const cleaned = content.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  const parsed = JSON.parse(cleaned);\n  sallyReply = parsed.reply || 'Sorry, something went wrong. Please try again.';\n  intent = parsed.intent || 'other';\n  extracted = parsed.extracted || {};\n} catch (e) {\n  // Fallback: use raw text if JSON parse fails\n  sallyReply = claudeResponse.content?.[0]?.text || 'Sorry, I had trouble processing that. Please try again in a moment.';\n  intent = 'other';\n}\n\nreturn [{\n  json: {\n    ...messageData,\n    sallyReply,\n    intent,\n    extracted\n  }\n}];\n"
+      },
+      "id": "ccfe8718-977d-4b9a-9b8a-bfdae5d2f453",
+      "name": "Parse Claude Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        432,
+        -1712
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.airtable.com/v0/{{ $env.AIRTABLE_BASE_ID }}/Conversations",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.AIRTABLE_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fields\": {\n    \"phone\": \"{{ $('Extract Message Data').item.json.phone }}\",\n    \"direction\": \"inbound\",\n    \"message\": {{ JSON.stringify ($('Extract Message Data').item.json.message) }},\n    \"lead_name\": \"{{ $json.fields.Name }}\",\n    \"timestamp\": \"{{ $('Extract Message Data').item.json.timestamp }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "43bba03f-a598-4119-a54f-6f0f75424ee8",
+      "name": "Log Inbound Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        656,
+        -1712
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.airtable.com/v0/{{ $env.AIRTABLE_BASE_ID }}/Conversations",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.AIRTABLE_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fields\": {\n    \"phone\": \"{{ $('Extract Message Data').item.json.phone }}\",\n    \"direction\": \"outbound\",\n    \"message\": \"{{ $json.sallyReply.replace(/\\n/g, ' ').replace(/\"/g, '\\\\\"') }}\",\n    \"lead_name\": \"{{ $json.extracted.Name }}\",\n    \"timestamp\": \"{{ new Date().toISOString() }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "ceaaf7cf-4de2-47e6-a06f-536ebc8114bf",
+      "name": "Log Outbound Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        880,
+        -1712
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Update lead fields from extracted data\nconst data = $('Parse Claude Response').first().json;\nconst extracted = data.extracted || {};\nconst leadFields = data.fields || {};\n\nconst updates = {};\n\n// Update name if extracted and not already set\n// updates.sally_reply = leadFields.sally_reply\n\n/**\n \n  if (extracted.name && !leadFields.Name) {\n  updates.Name = extracted.name;\n}\nif (extracted.budget_min) updates.budget_min = extracted.budget_min;\nif (extracted.budget_max) updates.budget_max = extracted.budget_max;\nif (extracted.bedrooms_wanted) updates.bedrooms_wanted = extracted.bedrooms_wanted;\nif (extracted.localities_wanted) updates.localities_wanted = extracted.localities_wanted;\nif (extracted.special_requirements) {\n  updates.special_requirements = extracted.special_requirements;\n}\n*/\nif (data.intent === 'book_visit' && leadFields.status !== 'visit_scheduled') {\n  updates.status = 'visit_scheduled';\n} else if (data.intent === 'escalate' && leadFields.status !== 'hot') {\n  updates.status = 'hot';\n} else if (leadFields.status === 'new' && data.intent === 'qualifying') {\n  updates.status = 'qualifying';\n} else {\n  updates.status = 'buy_new'\n}\n\nreturn [{\n  json: {\n    ...data,\n    leadUpdates: updates,\n    hasUpdates: Object.keys(updates).length > 0\n  }\n}];\n"
+      },
+      "id": "b4db3fa9-f254-4eb7-b84a-9902a29e27e2",
+      "name": "Prepare Lead Updates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1104,
+        -1712
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $('Prepare Lead Updates').first().json.hasUpdates }}",
+              "value2": "={{ true }}"
+            }
+          ]
+        }
+      },
+      "id": "2f4d46af-2f33-452f-8b47-f1d7822ab483",
+      "name": "Has Lead Updates?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        1328,
+        -1712
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.airtable.com/v0/{{ $env.AIRTABLE_BASE_ID }}/Leads/{{ $json.id}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.AIRTABLE_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "=\n{\n  \"fields\": {\n    \"status\": \"{{ $json.leadUpdates.status}}\"   \n  }\n}",
+        "options": {}
+      },
+      "id": "04248782-757e-40f8-afb6-ebae0191fdc8",
+      "name": "Update Lead Record",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1552,
+        -1776
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.twilio.com/2010-04-01/Accounts/{{ $env.TWILIO_ACCOUNT_SID }}/Messages.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "From",
+              "value": "={{ $env.TWILIO_WHATSAPP_NUMBER }}"
+            },
+            {
+              "name": "To",
+              "value": "={{ $('Extract Message Data').first().json.chatId }}"
+            },
+            {
+              "name": "Body",
+              "value": "={{ $('Parse Claude Response').first().json.sallyReply }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0a82ac26-ee8f-4b10-bb28-7efe5604e8b1",
+      "name": "Send WhatsApp Reply",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1776,
+        -1616
+      ],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "VubeSvtpENntwCMi",
+          "name": "basiccreds_twilio"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.airtable.com/v0/{{ $env.AIRTABLE_BASE_ID }}/Leads",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.AIRTABLE_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fields\": {\n    \"phone\": \"{{ $json.phone }}\",\n    \"Name\": \"{{ $json.senderName }}\",\n    \"status\": \"new\",\n     \"bedrooms_wanted\": \"{{ $json.bedrooms_wanted || null }}\",\n\"localities_wanted\": \"{{ $json.localities_wanted || null }}\",\n\"budget_min\": {{ $json.budget_min || 0 }},\n\"budget_max\": {{ $json.budget_max || 0 }},\n\"intent\": \"{{ $json.intent }}\"\n  }\n}",
+        "options": {}
+      },
+      "id": "97fe4d3e-ee4e-4ec4-b442-d64eb7c3cd33",
+      "name": "Create New Lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -240,
+        -1616
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $env.ANTHROPIC_API_KEY }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-haiku-4-5-20251001\",\n  \"max_tokens\": 500,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Extract property search details from this WhatsApp message and return ONLY valid JSON. No explanation. No markdown. No code blocks.\\n\\nMessage: \\\"{{ $json.message.replace(/\\s*[\\r\\n]+\\s*/g, ' ').trim() }}\\\"\\n\\nRules:\\n- budget_min and budget_max: extract as numbers only. For rent messages use monthly amount in rupees (25000). For purchase use lakhs (60).\\n- If budget is a range like 25k-30k, set budget_min=25000 and budget_max=30000\\n- If single budget mentioned, set both min and max to same value\\n- intent: 'buy' or 'rent' based on message\\n- budget_type: when intent is rent  it is 'monthly_rent'  rental properties , and when intent is buy 'purchase_lakhs' \\n- spl_requests: extract as long text if special or  extra requirements mentioned like 'want near to metro transport and public transport' or 'want close to schools and downtown'\\n- localities_wanted: extract locality names as comma separated string\\n- bedrooms_wanted: extract as '2BHK', '3BHK' etc\\n- Return exactly:\\n{\\\"bedrooms_wanted\\\": \\\"2BHK or null\\\",\\\"spl_requests\\\":\\\"spl requests made or null\\\", \\\"localities_wanted\\\": \\\"locality names or null\\\", \\\"budget_min\\\": 25000, \\\"budget_max\\\": 30000, \\\"intent\\\": \\\"buy or rent\\\", \\\"budget_type\\\": \\\"monthly_rent or purchase_lakhs\\\"}\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -1584,
+        -1712
+      ],
+      "id": "400e0b18-b855-4c0c-9e42-dfb25ba66d3d",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "OK",
+        "options": {}
+      },
+      "id": "a84ce2a8-8b22-488b-b0ba-9d95ca9bd232",
+      "name": "Respond 200",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        -2256,
+        -1712
+      ],
+      "notesInFlow": false,
+      "alwaysOutputData": false,
+      "executeOnce": false,
+      "retryOnFail": false
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "4d343372-44ec-46aa-ba4b-76cf8af82838",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -2480,
+        -1712
+      ],
+      "id": "7c8f280f-6252-4097-9022-225d5abf2753",
+      "name": "Webhook",
+      "webhookId": "4d343372-44ec-46aa-ba4b-76cf8af82838"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://api.airtable.com/v0/{{ $env.AIRTABLE_BASE_ID }}/Leads/{{ $json.leadId }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.AIRTABLE_TOKEN }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ fields: $json.fields }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -464,
+        -1808
+      ],
+      "id": "cf28cea7-7827-4162-a872-083720eac88c",
+      "name": "Update LEAD"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loop over input items and add a new field called 'myNewField' to the JSON of each one\nconst d = $input.first().json;\n\nconst fields = {};\n\nif (d.bedrooms_wanted)   fields['bedrooms_wanted']   = d.bedrooms_wanted;\nif (d.localities_wanted) fields['localities_wanted'] = d.localities_wanted;\nif (d.intent)            fields['intent']            = d.intent;\nif (d.spl_requests)      fields['spl_requests']      = d.spl_requests;\nif (d.budget_min > 0)    fields['budget_min']        = d.budget_min;\nif (d.budget_max > 0)    fields['budget_max']        = d.budget_max;\n\nreturn [{ json: { fields, leadId: d.leadId } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -688,
+        -1808
+      ],
+      "id": "5527aec4-897b-4ae3-b948-775764181082",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "414c0dcf-a607-49a6-b062-561262fcfab4",
+              "leftValue": "={{ [\"buy_new\", \"hot\"].includes($json.fields.status) }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1776,
+        -1824
+      ],
+      "id": "ecee2dbc-aa3e-460c-9a49-974afe87801c",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot8610979972:AAGog7gGb5GdGfv7g4t1snACcHQZHJ59Bc4/sendMessage ",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": \"-1003893582030\",\n  \"text\": \"🎯 **NEW QUALIFIED LEAD**\\n\\n👤 **Name:** {{ $('Prepare Lead Updates').first().json.fields.Name }}\\n📱 **Phone:** {{ $('Prepare Lead Updates').first().json.fields.phone }}\\n📍 **Location:** {{ $('Prepare Lead Updates').first().json.fields.localities_wanted }}\\n💰 **Budget:** {{ $('Prepare Lead Updates').first().json.fields.budget_min }} - {{ $('Prepare Lead Updates').first().json.fields.budget_max }}\\n🏠 **BHK:** {{ $('Prepare Lead Updates').first().json.fields.bedrooms_wanted }}\\n🎯 **Intent:** {{ $('Prepare Lead Updates').first().json.fields.intent }}\\n✨ **Special Requests:** {{ $('Prepare Lead Updates').first().json.fields.spl_requests }}\\n⏰ **Status:** {{ $('Prepare Lead Updates').first().json.fields.status }} ✅\"\n}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2128,
+        -1840
+      ],
+      "id": "f22d9243-a67d-448a-bce0-facff772e036",
+      "name": "Telegram Lead Contact",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Is Text Message?": {
+      "main": [
+        [
+          {
+            "node": "Extract Message Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Message Data": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Lead in Airtable": {
+      "main": [
+        [
+          {
+            "node": "Check Lead Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Lead Exists": {
+      "main": [
+        [
+          {
+            "node": "Lead Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lead Exists?": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create New Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Conversation History": {
+      "main": [
+        [
+          {
+            "node": "Build Claude Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Claude Prompt": {
+      "main": [
+        [
+          {
+            "node": "Call Claude API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Claude API": {
+      "main": [
+        [
+          {
+            "node": "Parse Claude Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Claude Response": {
+      "main": [
+        [
+          {
+            "node": "Log Inbound Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Inbound Message": {
+      "main": [
+        [
+          {
+            "node": "Log Outbound Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Outbound Message": {
+      "main": [
+        [
+          {
+            "node": "Prepare Lead Updates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Lead Updates": {
+      "main": [
+        [
+          {
+            "node": "Has Lead Updates?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Lead Updates?": {
+      "main": [
+        [
+          {
+            "node": "Update Lead Record",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send WhatsApp Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create New Lead": {
+      "main": [
+        [
+          {
+            "node": "Build Claude Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Find Lead in Airtable",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond 200": {
+      "main": [
+        [
+          {
+            "node": "Is Text Message?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Respond 200",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Lead Record": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send WhatsApp Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update LEAD": {
+      "main": [
+        [
+          {
+            "node": "Get Conversation History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Update LEAD",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send WhatsApp Reply": {
+      "main": [
+        []
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Telegram Lead Contact",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Telegram Lead Contact": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "86328aff-91f3-4d03-9dd4-4882f0b51d17",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "7dc8bb6bd7cc1cf523ac3588f8d1b192ef1c57ece9a61ceb433845168e44533f"
+  },
+  "id": "iXACNuZQV9KFqJoM",
+  "tags": [
+    {
+      "updatedAt": "2026-04-24T16:54:05.259Z",
+      "createdAt": "2026-04-24T16:54:05.259Z",
+      "id": "3hi1Xx14NfCV36Kz",
+      "name": "1.0.0"
+    }
+  ]
+}
